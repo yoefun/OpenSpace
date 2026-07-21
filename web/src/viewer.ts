@@ -18,7 +18,7 @@ export class SceneViewer {
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1210);
+    this.scene.background = new THREE.Color(0x060b14);
 
     this.camera = new THREE.PerspectiveCamera(
       50,
@@ -32,16 +32,16 @@ export class SceneViewer {
     this.controls.target.set(2.5, 1.2, 2);
     this.controls.update();
 
-    const hemi = new THREE.HemisphereLight(0xe8efe6, 0x2a332c, 1.1);
+    const hemi = new THREE.HemisphereLight(0xd8ecff, 0x0a1524, 1.05);
     this.scene.add(hemi);
-    const dir = new THREE.DirectionalLight(0xfff2d6, 1.2);
+    const dir = new THREE.DirectionalLight(0xb8f0ff, 1.15);
     dir.position.set(5, 10, 3);
     this.scene.add(dir);
 
     this.root = new THREE.Group();
     this.scene.add(this.root);
 
-    const grid = new THREE.GridHelper(20, 20, 0x3a4a3c, 0x243028);
+    const grid = new THREE.GridHelper(20, 20, 0x1a4a5c, 0x0e1a2e);
     grid.position.y = -0.01;
     this.scene.add(grid);
 
