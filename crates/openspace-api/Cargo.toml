@@ -29,6 +29,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 mime_guess = "2"
 bytes = "1"
 image = { workspace = true }
+clap = { version = "4", features = ["derive", "env"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
