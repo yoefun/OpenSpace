@@ -2,7 +2,7 @@
 
 use glam::Vec2;
 use image::{DynamicImage, GrayImage, Luma};
-use openspace_core::{EntityId, FloorplanIR, OpenSpaceError, Result, Room, WallSegment};
+use openspace_core::{simplify_ir, EntityId, FloorplanIR, OpenSpaceError, Result, Room, WallSegment};
 use uuid::Uuid;
 
 /// Detect walls and rooms from a floorplan raster image.
@@ -19,16 +19,19 @@ pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
     let edges = simple_edges(&binary);
     let mut segments = extract_line_segments(&edges);
     orthogonalize(&mut segments);
-    snap_endpoints(&mut segments, 8.0);
-    merge_collinear(&mut segments, 10.0, 8.0);
+    let snap_tol = (w.min(h) as f32 * 0.012).clamp(4.0, 12.0);
+    snap_endpoints(&mut segments, snap_tol);
+    merge_collinear(&mut segments, snap_tol, snap_tol * 1.2);
+    segments = dedupe_segments(&segments, snap_tol * 0.8);
 
     let scale = estimate_scale(w, h);
     let height = 2.7_f32;
     let thickness = 0.15_f32;
+    let min_px = (w.min(h) as f32 * 0.035).max(20.0);
 
     let walls: Vec<WallSegment> = segments
         .iter()
-        .filter(|s| s.length() > 12.0)
+        .filter(|s| s.length() >= min_px)
         .map(|s| WallSegment {
             id: Uuid::new_v4(),
             a: Vec2::new(s.x0 * scale, s.y0 * scale),
@@ -38,16 +41,21 @@ pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
         })
         .collect();
 
-    let rooms = infer_rooms_from_walls(&walls, scale);
-
-    Ok(FloorplanIR {
+    let mut ir = FloorplanIR {
         walls,
         openings: Vec::new(),
-        rooms,
+        rooms: Vec::new(),
         scale_m_per_px: scale,
         default_wall_height_m: height,
         default_wall_thickness_m: thickness,
-    })
+    };
+    simplify_ir(&mut ir, min_px * scale * 0.85, snap_tol * scale);
+    ir.rooms = infer_rooms_from_walls(&ir.walls, scale);
+    if ir.rooms.is_empty() && !ir.walls.is_empty() {
+        simplify_ir(&mut ir, min_px * scale * 0.5, snap_tol * scale * 1.5);
+        ir.rooms = infer_rooms_from_walls(&ir.walls, scale);
+    }
+    Ok(ir)
 }
 
 fn estimate_scale(w: u32, h: u32) -> f32 {
@@ -267,6 +275,35 @@ fn snap_endpoints(segs: &mut [Seg], tol: f32) {
         s.x1 = x1;
         s.y1 = y1;
     }
+}
+
+/// Keep the longest segment per orientation/position bucket (reduces double-line noise).
+fn dedupe_segments(segs: &[Seg], bucket: f32) -> Vec<Seg> {
+    let mut kept: Vec<Seg> = Vec::new();
+    for s in segs {
+        let horiz = is_horiz(s);
+        let key = if horiz {
+            (true, (s.y0 / bucket).round() as i32)
+        } else {
+            (false, (s.x0 / bucket).round() as i32)
+        };
+        if let Some(existing) = kept.iter_mut().find(|e| {
+            let eh = is_horiz(e);
+            let ek = if eh {
+                (true, (e.y0 / bucket).round() as i32)
+            } else {
+                (false, (e.x0 / bucket).round() as i32)
+            };
+            ek == key
+        }) {
+            if s.length() > existing.length() {
+                *existing = s.clone();
+            }
+        } else {
+            kept.push(s.clone());
+        }
+    }
+    kept
 }
 
 fn merge_collinear(segs: &mut Vec<Seg>, dist_tol: f32, gap_tol: f32) {

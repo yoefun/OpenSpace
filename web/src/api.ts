@@ -124,6 +124,30 @@ export async function build(id: string): Promise<Project> {
   return parseJson(res);
 }
 
+export async function simplifyIr(id: string): Promise<Project> {
+  const res = await fetch(`/api/projects/${id}/ir/simplify`, { method: "POST" });
+  return parseJson(res);
+}
+
+/** Poll until ready/failed (SSE fallback for Windows / flaky EventSource). */
+export async function waitForBuild(
+  id: string,
+  onProgress?: (p: Project) => void,
+  timeoutMs = 120_000,
+): Promise<Project> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const p = await getProject(id);
+    onProgress?.(p);
+    if (p.status === "ready") return p;
+    if (p.status === "failed") {
+      throw new Error(p.error || p.progress_message || "重建失败");
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("重建超时，请检查后端日志或刷新页面");
+}
+
 export function subscribeEvents(
   id: string,
   onEvent: (ev: ProgressEvent) => void,

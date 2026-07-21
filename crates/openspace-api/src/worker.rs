@@ -1,7 +1,7 @@
 use crate::db;
 use crate::state::{AppState, ProjectEvent};
 use chrono::Utc;
-use openspace_core::ProjectStatus;
+use openspace_core::{ProjectStatus, simplify_ir};
 
 pub fn spawn_worker(state: AppState) {
     tokio::spawn(async move {
@@ -53,6 +53,11 @@ async fn process_build(state: &AppState, project_id: uuid::Uuid) -> anyhow::Resu
     emit(state, project_id, "meshing", 0.55, "meshing");
 
     let data_root = state.project_dir(project_id);
+
+    let min_len = project.ir.scale_m_per_px * 10.0;
+    let merge_tol = project.ir.scale_m_per_px * 6.0;
+    simplify_ir(&mut project.ir, min_len.max(0.12), merge_tol.max(0.08));
+    db::update_project(&state.pool, &project).await?;
 
     // Resolve photo room_ids by name again
     for photo in &mut project.photos {

@@ -1,6 +1,9 @@
 //! Core types for OpenSpace floorplan intermediate representation.
 
+mod simplify;
+
 use chrono::{DateTime, Utc};
+pub use simplify::simplify_ir;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

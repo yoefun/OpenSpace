@@ -4,7 +4,7 @@ function uuid(): string {
   return crypto.randomUUID();
 }
 
-export type EditorTool = "select" | "add-wall" | "add-door" | "add-window";
+export type EditorTool = "select" | "pan" | "add-wall" | "add-door" | "add-window";
 
 function vx(p: Vec2): number {
   return p[0];
@@ -22,9 +22,19 @@ export class FloorplanEditor {
   tool: EditorTool = "select";
   selectedWallId: string | null = null;
   drag: { wallId: string; end: "a" | "b" } | null = null;
+  panDrag: { x: number; y: number; panX: number; panY: number } | null = null;
   pendingStart: Vec2 | null = null;
   onChange: ((ir: FloorplanIR) => void) | null = null;
-  scalePx = 1;
+
+  /** Pixels per image pixel at zoom=1 */
+  baseScale = 1;
+  zoom = 1;
+  panX = 0;
+  panY = 0;
+  displayW = 800;
+  displayH = 480;
+  private dpr = 1;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor(canvas: HTMLCanvasElement, ir: FloorplanIR) {
     this.canvas = canvas;
@@ -33,6 +43,15 @@ export class FloorplanEditor {
     this.ctx = ctx;
     this.ir = structuredClone(ir);
     this.bind();
+    const wrap = canvas.parentElement;
+    if (wrap) {
+      this.resizeObserver = new ResizeObserver(() => this.resize());
+      this.resizeObserver.observe(wrap);
+    }
+  }
+
+  destroy() {
+    this.resizeObserver?.disconnect();
   }
 
   setIr(ir: FloorplanIR) {
@@ -51,39 +70,109 @@ export class FloorplanEditor {
     this.image = img;
     this.imageNatural = { w: img.naturalWidth, h: img.naturalHeight };
     this.resize();
+    this.fitToView();
     this.draw();
   }
 
   resize() {
-    const maxW = this.canvas.parentElement?.clientWidth || 800;
-    const scale = Math.min(1, maxW / this.imageNatural.w);
-    this.scalePx = scale;
-    this.canvas.width = Math.floor(this.imageNatural.w * scale);
-    this.canvas.height = Math.floor(this.imageNatural.h * scale);
+    const wrap = this.canvas.parentElement;
+    if (!wrap) return;
+    this.dpr = window.devicePixelRatio || 1;
+    this.displayW = wrap.clientWidth || 800;
+    this.displayH = Math.max(420, wrap.clientHeight || 420);
+    this.canvas.width = Math.floor(this.displayW * this.dpr);
+    this.canvas.height = Math.floor(this.displayH * this.dpr);
+    this.canvas.style.width = `${this.displayW}px`;
+    this.canvas.style.height = `${this.displayH}px`;
+    this.draw();
+  }
+
+  fitToView() {
+    const iw = this.imageNatural.w;
+    const ih = this.imageNatural.h;
+    if (iw < 1 || ih < 1) return;
+    this.baseScale = Math.min(this.displayW / iw, this.displayH / ih) * 0.92;
+    this.zoom = 1;
+    this.panX = (this.displayW - iw * this.baseScale) * 0.5;
+    this.panY = (this.displayH - ih * this.baseScale) * 0.5;
+    this.draw();
+  }
+
+  zoomIn() {
+    this.zoomAt(this.displayW * 0.5, this.displayH * 0.5, 1.25);
+  }
+
+  zoomOut() {
+    this.zoomAt(this.displayW * 0.5, this.displayH * 0.5, 1 / 1.25);
+  }
+
+  private zoomAt(sx: number, sy: number, factor: number) {
+    const before = this.screenToPx(sx, sy);
+    this.zoom = Math.min(12, Math.max(0.15, this.zoom * factor));
+    const after = this.screenToPx(sx, sy);
+    this.panX += (after.x - before.x) * this.baseScale * this.zoom;
+    this.panY += (after.y - before.y) * this.baseScale * this.zoom;
+    this.draw();
+  }
+
+  private scaleFactor() {
+    return this.baseScale * this.zoom;
+  }
+
+  private pxToScreen(px: number, py: number) {
+    const s = this.scaleFactor();
+    return { x: px * s + this.panX, y: py * s + this.panY };
+  }
+
+  private screenToPx(sx: number, sy: number) {
+    const s = this.scaleFactor();
+    return { x: (sx - this.panX) / s, y: (sy - this.panY) / s };
+  }
+
+  private toWorld(e: PointerEvent): Vec2 {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const px = this.screenToPx(sx, sy);
+    return [px.x * this.ir.scale_m_per_px, px.y * this.ir.scale_m_per_px];
+  }
+
+  private toScreen(p: Vec2) {
+    const px = vx(p) / this.ir.scale_m_per_px;
+    const py = vy(p) / this.ir.scale_m_per_px;
+    return this.pxToScreen(px, py);
   }
 
   private bind() {
     this.canvas.addEventListener("pointerdown", (e) => this.onDown(e));
     this.canvas.addEventListener("pointermove", (e) => this.onMove(e));
-    this.canvas.addEventListener("pointerup", () => this.onUp());
-    this.canvas.addEventListener("pointerleave", () => this.onUp());
-  }
-
-  private toWorld(e: PointerEvent): Vec2 {
-    const rect = this.canvas.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / this.scalePx) * this.ir.scale_m_per_px;
-    const y = ((e.clientY - rect.top) / this.scalePx) * this.ir.scale_m_per_px;
-    return [x, y];
-  }
-
-  private toScreen(p: Vec2): { x: number; y: number } {
-    return {
-      x: (vx(p) / this.ir.scale_m_per_px) * this.scalePx,
-      y: (vy(p) / this.ir.scale_m_per_px) * this.scalePx,
-    };
+    this.canvas.addEventListener("pointerup", (e) => this.onUp(e));
+    this.canvas.addEventListener("pointerleave", (e) => this.onUp(e));
+    this.canvas.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const rect = this.canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+        this.zoomAt(sx, sy, factor);
+      },
+      { passive: false },
+    );
   }
 
   private onDown(e: PointerEvent) {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    if (this.tool === "pan" || e.button === 1 || (e.button === 0 && e.shiftKey)) {
+      this.panDrag = { x: sx, y: sy, panX: this.panX, panY: this.panY };
+      this.canvas.setPointerCapture(e.pointerId);
+      return;
+    }
+
     const p = this.toWorld(e);
     if (this.tool === "add-wall") {
       if (!this.pendingStart) {
@@ -122,20 +211,21 @@ export class FloorplanEditor {
       return;
     }
 
+    const hitTol = 10 / this.scaleFactor();
     for (const w of this.ir.walls) {
       const sa = this.toScreen(w.a);
       const sb = this.toScreen(w.b);
-      const sx = e.clientX - this.canvas.getBoundingClientRect().left;
-      const sy = e.clientY - this.canvas.getBoundingClientRect().top;
-      if (Math.hypot(sa.x - sx, sa.y - sy) < 10) {
+      if (Math.hypot(sa.x - sx, sa.y - sy) < hitTol) {
         this.selectedWallId = w.id;
         this.drag = { wallId: w.id, end: "a" };
+        this.canvas.setPointerCapture(e.pointerId);
         this.draw();
         return;
       }
-      if (Math.hypot(sb.x - sx, sb.y - sy) < 10) {
+      if (Math.hypot(sb.x - sx, sb.y - sy) < hitTol) {
         this.selectedWallId = w.id;
         this.drag = { wallId: w.id, end: "b" };
+        this.canvas.setPointerCapture(e.pointerId);
         this.draw();
         return;
       }
@@ -146,6 +236,17 @@ export class FloorplanEditor {
   }
 
   private onMove(e: PointerEvent) {
+    const rect = this.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    if (this.panDrag) {
+      this.panX = this.panDrag.panX + (sx - this.panDrag.x);
+      this.panY = this.panDrag.panY + (sy - this.panDrag.y);
+      this.draw();
+      return;
+    }
+
     if (!this.drag) return;
     const p = this.toWorld(e);
     const wall = this.ir.walls.find((w) => w.id === this.drag!.wallId);
@@ -155,7 +256,14 @@ export class FloorplanEditor {
     this.draw();
   }
 
-  private onUp() {
+  private onUp(e: PointerEvent) {
+    if (this.canvas.hasPointerCapture(e.pointerId)) {
+      this.canvas.releasePointerCapture(e.pointerId);
+    }
+    if (this.panDrag) {
+      this.panDrag = null;
+      return;
+    }
     if (this.drag) {
       this.drag = null;
       this.rebuildRooms();
@@ -176,7 +284,7 @@ export class FloorplanEditor {
 
   private hitWall(p: Vec2): WallSegment | null {
     let best: WallSegment | null = null;
-    let bestD = 0.25;
+    let bestD = Math.max(0.15, 12 / this.scaleFactor()) * this.ir.scale_m_per_px;
     for (const w of this.ir.walls) {
       const d = distToSegment(p, w.a, w.b);
       if (d < bestD) {
@@ -223,40 +331,50 @@ export class FloorplanEditor {
   }
 
   draw() {
-    const { ctx, canvas } = this;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const { ctx } = this;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.clearRect(0, 0, this.displayW, this.displayH);
+    ctx.fillStyle = "#0d1210";
+    ctx.fillRect(0, 0, this.displayW, this.displayH);
+
     if (this.image) {
-      ctx.drawImage(this.image, 0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "rgba(10,14,12,0.35)";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const iw = this.imageNatural.w;
+      const ih = this.imageNatural.h;
+      const s = this.scaleFactor();
+      ctx.drawImage(this.image, this.panX, this.panY, iw * s, ih * s);
+      ctx.fillStyle = "rgba(10,14,12,0.32)";
+      ctx.fillRect(this.panX, this.panY, iw * s, ih * s);
     }
 
     for (const room of this.ir.rooms) {
       if (room.polygon.length < 3) continue;
       ctx.beginPath();
       room.polygon.forEach((p, i) => {
-        const s = this.toScreen(p);
-        if (i === 0) ctx.moveTo(s.x, s.y);
-        else ctx.lineTo(s.x, s.y);
+        const sc = this.toScreen(p);
+        if (i === 0) ctx.moveTo(sc.x, sc.y);
+        else ctx.lineTo(sc.x, sc.y);
       });
       ctx.closePath();
       ctx.fillStyle = "rgba(111, 158, 138, 0.18)";
       ctx.fill();
     }
 
+    const lw = Math.max(1.5, 2 / this.scaleFactor());
+    const handleR = Math.max(4, 5 / this.scaleFactor());
+
     for (const w of this.ir.walls) {
       const a = this.toScreen(w.a);
       const b = this.toScreen(w.b);
       ctx.strokeStyle = w.id === this.selectedWallId ? "#c4a35a" : "#e8efe6";
-      ctx.lineWidth = w.id === this.selectedWallId ? 3 : 2;
+      ctx.lineWidth = w.id === this.selectedWallId ? lw + 1 : lw;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
       ctx.fillStyle = "#c4a35a";
       ctx.beginPath();
-      ctx.arc(a.x, a.y, 5, 0, Math.PI * 2);
-      ctx.arc(b.x, b.y, 5, 0, Math.PI * 2);
+      ctx.arc(a.x, a.y, handleR, 0, Math.PI * 2);
+      ctx.arc(b.x, b.y, handleR, 0, Math.PI * 2);
       ctx.fill();
     }
 
@@ -265,18 +383,27 @@ export class FloorplanEditor {
       if (!wall) continue;
       const mx = vx(wall.a) + (vx(wall.b) - vx(wall.a)) * ((o.t0 + o.t1) / 2);
       const my = vy(wall.a) + (vy(wall.b) - vy(wall.a)) * ((o.t0 + o.t1) / 2);
-      const s = this.toScreen([mx, my]);
+      const sc = this.toScreen([mx, my]);
+      const sz = Math.max(6, 8 / this.scaleFactor());
       ctx.fillStyle = o.kind === "door" ? "#8b5a2b" : "#6fa8dc";
-      ctx.fillRect(s.x - 6, s.y - 6, 12, 12);
+      ctx.fillRect(sc.x - sz / 2, sc.y - sz / 2, sz, sz);
     }
 
     if (this.pendingStart) {
-      const s = this.toScreen(this.pendingStart);
+      const sc = this.toScreen(this.pendingStart);
       ctx.fillStyle = "#c4a35a";
       ctx.beginPath();
-      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.arc(sc.x, sc.y, handleR + 1, 0, Math.PI * 2);
       ctx.fill();
     }
+
+    ctx.fillStyle = "rgba(154, 171, 158, 0.9)";
+    ctx.font = "12px Instrument Sans, sans-serif";
+    ctx.fillText(
+      `缩放 ${(this.zoom * 100).toFixed(0)}% · 滚轮缩放 · Shift 拖拽平移`,
+      10,
+      this.displayH - 10,
+    );
   }
 }
 
