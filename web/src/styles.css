@@ -16,9 +16,13 @@
   --line: rgba(46, 230, 255, 0.16);
   --line-strong: rgba(46, 230, 255, 0.38);
 
-  --font-sans: "Noto Sans SC", "Segoe UI", sans-serif;
-  --font-display: "Orbitron", "Noto Sans SC", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  /* CJK: prefer system Chinese fonts (no Google CDN). Latin: Orbitron / JetBrains Mono are self-hosted. */
+  --font-sans: "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI",
+    "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Orbitron", "Noto Sans SC", "PingFang SC", "Microsoft YaHei",
+    system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Sarasa Mono SC", ui-monospace,
+    "SFMono-Regular", Menlo, Consolas, monospace;
 
   /* Unified control system */
   --control-h: 2.25rem;

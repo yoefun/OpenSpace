@@ -1,3 +1,9 @@
+// Self-hosted fonts (bundled by Vite) — no fonts.googleapis.com dependency.
+import "@fontsource/orbitron/latin-500.css";
+import "@fontsource/orbitron/latin-600.css";
+import "@fontsource/orbitron/latin-700.css";
+import "@fontsource/jetbrains-mono/latin-400.css";
+import "@fontsource/jetbrains-mono/latin-500.css";
 import "./styles.css";
 import {
   build,

@@ -398,7 +398,7 @@ export class FloorplanEditor {
     }
 
     ctx.fillStyle = "rgba(154, 171, 158, 0.9)";
-    ctx.font = "12px Instrument Sans, sans-serif";
+    ctx.font = '12px "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(
       `缩放 ${(this.zoom * 100).toFixed(0)}% · 滚轮缩放 · Shift 拖拽平移`,
       10,
