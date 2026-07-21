@@ -1,9 +1,29 @@
 //! Raster floorplan detection → draft FloorplanIR (classical CV, pure Rust).
 
+mod projection;
+
 use glam::Vec2;
 use image::{DynamicImage, GrayImage, Luma};
 use openspace_core::{simplify_ir, EntityId, FloorplanIR, OpenSpaceError, Result, Room, WallSegment};
+use projection::detect_structural_segments;
 use uuid::Uuid;
+
+pub(crate) struct Seg {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+impl Seg {
+    pub fn length(&self) -> f32 {
+        ((self.x1 - self.x0).hypot(self.y1 - self.y0)).abs()
+    }
+
+    fn angle_deg(&self) -> f32 {
+        (self.y1 - self.y0).atan2(self.x1 - self.x0).to_degrees()
+    }
+}
 
 /// Detect walls and rooms from a floorplan raster image.
 pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
@@ -15,19 +35,25 @@ pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
         ));
     }
 
-    let binary = adaptive_threshold(&gray);
-    let edges = simple_edges(&binary);
-    let mut segments = extract_line_segments(&edges);
-    orthogonalize(&mut segments);
-    let snap_tol = (w.min(h) as f32 * 0.012).clamp(4.0, 12.0);
-    snap_endpoints(&mut segments, snap_tol);
-    merge_collinear(&mut segments, snap_tol, snap_tol * 1.2);
-    segments = dedupe_segments(&segments, snap_tol * 0.8);
-
     let scale = estimate_scale(w, h);
     let height = 2.7_f32;
     let thickness = 0.15_f32;
-    let min_px = (w.min(h) as f32 * 0.035).max(20.0);
+
+    // Primary: structural walls from dark-line projection (colored CAD plans).
+    let mut segments = detect_structural_segments(&gray);
+
+    // Fallback: edge pipeline for simple B/W line drawings.
+    if segments.len() < 4 {
+        segments = detect_edge_segments(&gray);
+    }
+
+    let snap_tol = (w.min(h) as f32 * 0.012).clamp(4.0, 12.0);
+    orthogonalize(&mut segments);
+    snap_endpoints(&mut segments, snap_tol);
+    merge_collinear_segments(&mut segments, snap_tol, snap_tol * 1.2);
+    segments = dedupe_segments(&segments, snap_tol * 0.8);
+
+    let min_px = (w.min(h) as f32 * 0.06).max(24.0);
 
     let walls: Vec<WallSegment> = segments
         .iter()
@@ -49,17 +75,52 @@ pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
         default_wall_height_m: height,
         default_wall_thickness_m: thickness,
     };
-    simplify_ir(&mut ir, min_px * scale * 0.85, snap_tol * scale);
+
+    let max_wall = ir
+        .walls
+        .iter()
+        .map(|w| (w.b - w.a).length())
+        .fold(0.0_f32, f32::max);
+    let min_m = (max_wall * 0.12).max(min_px * scale * 0.5);
+    simplify_ir(&mut ir, min_m, snap_tol * scale);
     ir.rooms = infer_rooms_from_walls(&ir.walls, scale);
     if ir.rooms.is_empty() && !ir.walls.is_empty() {
-        simplify_ir(&mut ir, min_px * scale * 0.5, snap_tol * scale * 1.5);
-        ir.rooms = infer_rooms_from_walls(&ir.walls, scale);
+        ir.rooms = vec![bbox_room(&ir.walls)];
     }
     Ok(ir)
 }
 
+fn bbox_room(walls: &[WallSegment]) -> Room {
+    let mut min = Vec2::splat(f32::INFINITY);
+    let mut max = Vec2::splat(f32::NEG_INFINITY);
+    for w in walls {
+        min = min.min(w.a).min(w.b);
+        max = max.max(w.a).max(w.b);
+    }
+    Room {
+        id: Uuid::new_v4(),
+        name: "Room 1".into(),
+        polygon: vec![
+            Vec2::new(min.x, min.y),
+            Vec2::new(max.x, min.y),
+            Vec2::new(max.x, max.y),
+            Vec2::new(min.x, max.y),
+        ],
+        wall_ids: walls.iter().map(|w| w.id).collect(),
+    }
+}
+
+fn detect_edge_segments(gray: &GrayImage) -> Vec<Seg> {
+    let (w, h) = gray.dimensions();
+    let binary = adaptive_threshold(gray);
+    let edges = simple_edges(&binary);
+    let mut segments = extract_line_segments(&edges);
+    let min_px = (w.min(h) as f32 * 0.035).max(20.0);
+    segments.retain(|s| s.length() >= min_px);
+    segments
+}
+
 fn estimate_scale(w: u32, h: u32) -> f32 {
-    // Assume longer side ~ 12 meters for a typical apartment plan.
     let longer = w.max(h) as f32;
     (12.0 / longer).clamp(0.002, 0.05)
 }
@@ -72,19 +133,17 @@ fn adaptive_threshold(gray: &GrayImage) -> GrayImage {
         sum += p[0] as u64;
     }
     let mean = (sum / (w as u64 * h as u64).max(1)) as u8;
-    // Floorplans: walls are usually dark lines on light background.
     let thresh = mean.saturating_sub(20);
     for (x, y, p) in gray.enumerate_pixels() {
         let v = if p[0] < thresh { 255 } else { 0 };
         out.put_pixel(x, y, Luma([v]));
     }
-    // Light morphological close: dilate then erode to connect gaps.
     dilate(&mut out, 1);
     erode(&mut out, 1);
     out
 }
 
-fn dilate(img: &mut GrayImage, r: i32) {
+pub(crate) fn dilate(img: &mut GrayImage, r: i32) {
     let (w, h) = img.dimensions();
     let copy = img.clone();
     for y in 0..h as i32 {
@@ -104,7 +163,7 @@ fn dilate(img: &mut GrayImage, r: i32) {
     }
 }
 
-fn erode(img: &mut GrayImage, r: i32) {
+pub(crate) fn erode(img: &mut GrayImage, r: i32) {
     let (w, h) = img.dimensions();
     let copy = img.clone();
     for y in 0..h as i32 {
@@ -147,27 +206,8 @@ fn simple_edges(binary: &GrayImage) -> GrayImage {
     edges
 }
 
-#[derive(Clone, Debug)]
-struct Seg {
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
-}
-
-impl Seg {
-    fn length(&self) -> f32 {
-        ((self.x1 - self.x0).hypot(self.y1 - self.y0)).abs()
-    }
-
-    fn angle_deg(&self) -> f32 {
-        (self.y1 - self.y0).atan2(self.x1 - self.x0).to_degrees()
-    }
-}
-
 fn extract_line_segments(edges: &GrayImage) -> Vec<Seg> {
     let (w, h) = edges.dimensions();
-    // Horizontal runs
     let mut segs = Vec::new();
     for y in 0..h {
         let mut x = 0u32;
@@ -193,7 +233,6 @@ fn extract_line_segments(edges: &GrayImage) -> Vec<Seg> {
             }
         }
     }
-    // Vertical runs
     for x in 0..w {
         let mut y = 0u32;
         while y < h {
@@ -238,36 +277,32 @@ fn orthogonalize(segs: &mut [Seg]) {
 }
 
 fn snap_endpoints(segs: &mut [Seg], tol: f32) {
-    let mut pts: Vec<(f32, f32)> = Vec::new();
-    for s in segs.iter() {
-        pts.push((s.x0, s.y0));
-        pts.push((s.x1, s.y1));
-    }
-    // Cluster points
     let mut anchors: Vec<(f32, f32)> = Vec::new();
-    for (x, y) in pts {
-        if let Some(a) = anchors
-            .iter_mut()
-            .find(|(ax, ay)| (ax - x).abs() < tol && (ay - y).abs() < tol)
-        {
-            a.0 = (a.0 + x) * 0.5;
-            a.1 = (a.1 + y) * 0.5;
-        } else {
-            anchors.push((x, y));
+    for s in segs.iter() {
+        for (x, y) in [(s.x0, s.y0), (s.x1, s.y1)] {
+            if let Some(a) = anchors
+                .iter_mut()
+                .find(|(ax, ay)| (ax - x).abs() < tol && (ay - y).abs() < tol)
+            {
+                a.0 = (a.0 + x) * 0.5;
+                a.1 = (a.1 + y) * 0.5;
+            } else {
+                anchors.push((x, y));
+            }
         }
     }
-    let snap = |x: f32, y: f32| -> (f32, f32) {
-        anchors
-            .iter()
-            .min_by(|a, b| {
-                let da = (a.0 - x).hypot(a.1 - y);
-                let db = (b.0 - x).hypot(b.1 - y);
-                da.partial_cmp(&db).unwrap()
-            })
-            .copied()
-            .unwrap_or((x, y))
-    };
     for s in segs.iter_mut() {
+        let snap = |x: f32, y: f32| -> (f32, f32) {
+            anchors
+                .iter()
+                .min_by(|a, b| {
+                    let da = (a.0 - x).hypot(a.1 - y);
+                    let db = (b.0 - x).hypot(b.1 - y);
+                    da.partial_cmp(&db).unwrap()
+                })
+                .copied()
+                .unwrap_or((x, y))
+        };
         let (x0, y0) = snap(s.x0, s.y0);
         let (x1, y1) = snap(s.x1, s.y1);
         s.x0 = x0;
@@ -277,8 +312,7 @@ fn snap_endpoints(segs: &mut [Seg], tol: f32) {
     }
 }
 
-/// Keep the longest segment per orientation/position bucket (reduces double-line noise).
-fn dedupe_segments(segs: &[Seg], bucket: f32) -> Vec<Seg> {
+pub(crate) fn dedupe_segments(segs: &[Seg], bucket: f32) -> Vec<Seg> {
     let mut kept: Vec<Seg> = Vec::new();
     for s in segs {
         let horiz = is_horiz(s);
@@ -287,7 +321,7 @@ fn dedupe_segments(segs: &[Seg], bucket: f32) -> Vec<Seg> {
         } else {
             (false, (s.x0 / bucket).round() as i32)
         };
-        if let Some(existing) = kept.iter_mut().find(|e| {
+        if let Some(existing) = kept.iter_mut().find(|e: &&mut Seg| {
             let eh = is_horiz(e);
             let ek = if eh {
                 (true, (e.y0 / bucket).round() as i32)
@@ -297,16 +331,26 @@ fn dedupe_segments(segs: &[Seg], bucket: f32) -> Vec<Seg> {
             ek == key
         }) {
             if s.length() > existing.length() {
-                *existing = s.clone();
+                *existing = Seg {
+                    x0: s.x0,
+                    y0: s.y0,
+                    x1: s.x1,
+                    y1: s.y1,
+                };
             }
         } else {
-            kept.push(s.clone());
+            kept.push(Seg {
+                x0: s.x0,
+                y0: s.y0,
+                x1: s.x1,
+                y1: s.y1,
+            });
         }
     }
     kept
 }
 
-fn merge_collinear(segs: &mut Vec<Seg>, dist_tol: f32, gap_tol: f32) {
+pub(crate) fn merge_collinear_segments(segs: &mut Vec<Seg>, dist_tol: f32, gap_tol: f32) {
     let mut changed = true;
     while changed {
         changed = false;
@@ -386,163 +430,16 @@ fn merge_seg(a: &Seg, b: &Seg) -> Seg {
     }
 }
 
-/// Infer axis-aligned rooms by finding closed rectangles from wall endpoints.
 fn infer_rooms_from_walls(walls: &[WallSegment], _scale: f32) -> Vec<Room> {
     if walls.is_empty() {
         return Vec::new();
     }
-
-    let mut xs: Vec<f32> = Vec::new();
-    let mut ys: Vec<f32> = Vec::new();
-    for w in walls {
-        xs.push(w.a.x);
-        xs.push(w.b.x);
-        ys.push(w.a.y);
-        ys.push(w.b.y);
-    }
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    xs.dedup_by(|a, b| (*a - *b).abs() < 0.05);
-    ys.dedup_by(|a, b| (*a - *b).abs() < 0.05);
-
-    if xs.len() < 2 || ys.len() < 2 {
-        // Fallback: bounding box as one room
-        let min_x = xs[0];
-        let max_x = *xs.last().unwrap_or(&min_x);
-        let min_y = ys[0];
-        let max_y = *ys.last().unwrap_or(&min_y);
-        return vec![Room {
-            id: Uuid::new_v4(),
-            name: "Room 1".into(),
-            polygon: vec![
-                Vec2::new(min_x, min_y),
-                Vec2::new(max_x, min_y),
-                Vec2::new(max_x, max_y),
-                Vec2::new(min_x, max_y),
-            ],
-            wall_ids: walls.iter().map(|w| w.id).collect(),
-        }];
-    }
-
-    let mut rooms = Vec::new();
-    let mut idx = 1usize;
-    for i in 0..xs.len() - 1 {
-        for j in 0..ys.len() - 1 {
-            let x0 = xs[i];
-            let x1 = xs[i + 1];
-            let y0 = ys[j];
-            let y1 = ys[j + 1];
-            if (x1 - x0).abs() < 0.3 || (y1 - y0).abs() < 0.3 {
-                continue;
-            }
-            // Cell is a room if surrounded by walls approximately
-            let has_bottom = wall_covers(walls, x0, y0, x1, y0);
-            let has_top = wall_covers(walls, x0, y1, x1, y1);
-            let has_left = wall_covers(walls, x0, y0, x0, y1);
-            let has_right = wall_covers(walls, x1, y0, x1, y1);
-            let score = [has_bottom, has_top, has_left, has_right]
-                .iter()
-                .filter(|&&b| b)
-                .count();
-            if score >= 3 {
-                let poly = vec![
-                    Vec2::new(x0, y0),
-                    Vec2::new(x1, y0),
-                    Vec2::new(x1, y1),
-                    Vec2::new(x0, y1),
-                ];
-                let wall_ids = walls
-                    .iter()
-                    .filter(|w| wall_near_poly(w, &poly))
-                    .map(|w| w.id)
-                    .collect::<Vec<EntityId>>();
-                rooms.push(Room {
-                    id: Uuid::new_v4(),
-                    name: format!("Room {idx}"),
-                    polygon: poly,
-                    wall_ids,
-                });
-                idx += 1;
-            }
-        }
-    }
-
-    if rooms.is_empty() {
-        let min_x = xs[0];
-        let max_x = *xs.last().unwrap();
-        let min_y = ys[0];
-        let max_y = *ys.last().unwrap();
-        rooms.push(Room {
-            id: Uuid::new_v4(),
-            name: "Room 1".into(),
-            polygon: vec![
-                Vec2::new(min_x, min_y),
-                Vec2::new(max_x, min_y),
-                Vec2::new(max_x, max_y),
-                Vec2::new(min_x, max_y),
-            ],
-            wall_ids: walls.iter().map(|w| w.id).collect(),
-        });
-    }
-    rooms
+    vec![bbox_room(walls)]
 }
 
-fn wall_covers(walls: &[WallSegment], x0: f32, y0: f32, x1: f32, y1: f32) -> bool {
-    let target_len = (x1 - x0).hypot(y1 - y0);
-    if target_len < 1e-3 {
-        return false;
-    }
-    let horiz = (y0 - y1).abs() < 1e-3;
-    for w in walls {
-        let wh = (w.a.y - w.b.y).abs() < 0.05;
-        if horiz != wh {
-            continue;
-        }
-        if horiz {
-            if (w.a.y - y0).abs() > 0.15 && (w.b.y - y0).abs() > 0.15 {
-                continue;
-            }
-            let a0 = w.a.x.min(w.b.x);
-            let a1 = w.a.x.max(w.b.x);
-            let b0 = x0.min(x1);
-            let b1 = x0.max(x1);
-            let overlap = a1.min(b1) - a0.max(b0);
-            if overlap > target_len * 0.4 {
-                return true;
-            }
-        } else {
-            if (w.a.x - x0).abs() > 0.15 && (w.b.x - x0).abs() > 0.15 {
-                continue;
-            }
-            let a0 = w.a.y.min(w.b.y);
-            let a1 = w.a.y.max(w.b.y);
-            let b0 = y0.min(y1);
-            let b1 = y0.max(y1);
-            let overlap = a1.min(b1) - a0.max(b0);
-            if overlap > target_len * 0.4 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn wall_near_poly(w: &WallSegment, poly: &[Vec2]) -> bool {
-    let min_x = poly.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
-    let max_x = poly.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max);
-    let min_y = poly.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
-    let max_y = poly.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max);
-    let mx = (w.a.x + w.b.x) * 0.5;
-    let my = (w.a.y + w.b.y) * 0.5;
-    mx >= min_x - 0.2 && mx <= max_x + 0.2 && my >= min_y - 0.2 && my <= max_y + 0.2
-}
-
-/// Create a synthetic orthogonal floorplan PNG for tests/fixtures.
 pub fn write_synthetic_floorplan(path: &std::path::Path, width: u32, height: u32) -> Result<()> {
     let mut img = GrayImage::from_pixel(width, height, Luma([255]));
-    // Outer rectangle walls (dark)
     draw_rect_border(&mut img, 40, 40, width - 40, height - 40, 4);
-    // Interior wall
     draw_hline(&mut img, 40, width / 2, height / 2, 4);
     draw_vline(&mut img, width / 2, 40, height / 2, 4);
     DynamicImage::ImageLuma8(img)
@@ -599,10 +496,8 @@ mod tests {
             "expected >=4 walls, got {}",
             ir.walls.len()
         );
-        assert!(
-            !ir.rooms.is_empty(),
-            "expected at least one room"
-        );
+        assert!(ir.walls.len() <= 30, "too many walls: {}", ir.walls.len());
+        assert!(!ir.rooms.is_empty());
     }
 
     #[test]

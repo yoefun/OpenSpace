@@ -314,20 +314,26 @@ async fn build(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response 
         );
     }
 
-    if matches!(
-        project.status,
-        ProjectStatus::Meshing | ProjectStatus::Texturing | ProjectStatus::Confirmed
-    ) {
+    if matches!(project.status, ProjectStatus::Meshing | ProjectStatus::Texturing) {
         return err(
             StatusCode::CONFLICT,
             "build already in progress; wait or refresh status",
         );
     }
 
-    // Clean noisy detections before meshing (common with raster floorplans).
-    let min_len = project.ir.scale_m_per_px * 10.0;
-    let merge_tol = project.ir.scale_m_per_px * 6.0;
-    simplify_ir(&mut project.ir, min_len.max(0.12), merge_tol.max(0.08));
+    let ir_backup = project.ir.clone();
+    let min_len = project.ir.scale_m_per_px * 8.0;
+    let merge_tol = project.ir.scale_m_per_px * 5.0;
+    simplify_ir(&mut project.ir, min_len.max(0.08), merge_tol.max(0.06));
+    if project.ir.walls.len() < 3 {
+        project.ir = ir_backup;
+    }
+    if project.ir.walls.len() < 3 {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "need at least 3 wall segments; use 简化墙线 or redraw outer walls",
+        );
+    }
     project.status = ProjectStatus::Confirmed;
     project.progress = 0.4;
     project.progress_message = "queued for build".into();
