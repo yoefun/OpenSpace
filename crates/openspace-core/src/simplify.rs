@@ -5,9 +5,26 @@ use glam::Vec2;
 use uuid::Uuid;
 
 /// Merge collinear walls, drop short segments, rebuild a single room bbox.
+/// Never removes all walls — keeps at least the longest segments.
 pub fn simplify_ir(ir: &mut FloorplanIR, min_length_m: f32, merge_tol_m: f32) {
+    if ir.walls.is_empty() {
+        return;
+    }
+    let backup = ir.walls.clone();
     ir.walls.retain(|w| wall_length(w) >= min_length_m);
     merge_collinear_walls(&mut ir.walls, merge_tol_m);
+    if ir.walls.len() < 3 {
+        ir.walls = backup;
+        let mut sorted = ir.walls.clone();
+        sorted.sort_by(|a, b| {
+            wall_length(b)
+                .partial_cmp(&wall_length(a))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        sorted.truncate(24);
+        ir.walls = sorted;
+        merge_collinear_walls(&mut ir.walls, merge_tol_m);
+    }
     ir.openings
         .retain(|o| ir.walls.iter().any(|w| w.id == o.wall_id));
     rebuild_room_bbox(ir);

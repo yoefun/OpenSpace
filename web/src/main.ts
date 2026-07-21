@@ -163,6 +163,7 @@ async function renderEditor(el: HTMLElement) {
       <button id="zoom-out" title="缩小">−</button>
       <button id="zoom-fit" title="适应窗口">适应</button>
       <button id="zoom-in" title="放大">+</button>
+      <button class="btn secondary" id="redetect">重新检测</button>
       <button class="btn secondary" id="simplify">简化墙线</button>
     </div>
     <div class="editor-layout">
@@ -209,6 +210,21 @@ async function renderEditor(el: HTMLElement) {
   el.querySelector("#zoom-in")!.addEventListener("click", () => editor?.zoomIn());
   el.querySelector("#zoom-out")!.addEventListener("click", () => editor?.zoomOut());
   el.querySelector("#zoom-fit")!.addEventListener("click", () => editor?.fitToView());
+
+  el.querySelector("#redetect")!.addEventListener("click", async () => {
+    const status = el.querySelector("#estatus")!;
+    try {
+      status.textContent = "重新检测中…";
+      project = await detect(project!.id);
+      editor!.setIr(project.ir);
+      await editor!.loadImage(`/api/projects/${project.id}/floorplan`);
+      status.textContent = `检测完成：墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}`;
+      status.className = project.ir.walls.length <= 30 ? "status ok" : "status";
+    } catch (e) {
+      status.textContent = String(e);
+      status.className = "status error";
+    }
+  });
 
   el.querySelector("#simplify")!.addEventListener("click", async () => {
     const status = el.querySelector("#estatus")!;

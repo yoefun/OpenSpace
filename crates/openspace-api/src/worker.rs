@@ -52,14 +52,13 @@ async fn process_build(state: &AppState, project_id: uuid::Uuid) -> anyhow::Resu
     db::update_project(&state.pool, &project).await?;
     emit(state, project_id, "meshing", 0.55, "meshing");
 
-    let data_root = state.project_dir(project_id);
-
-    let min_len = project.ir.scale_m_per_px * 10.0;
-    let merge_tol = project.ir.scale_m_per_px * 6.0;
-    simplify_ir(&mut project.ir, min_len.max(0.12), merge_tol.max(0.08));
-    db::update_project(&state.pool, &project).await?;
-
-    // Resolve photo room_ids by name again
+    let ir_backup = project.ir.clone();
+    let min_len = project.ir.scale_m_per_px * 8.0;
+    let merge_tol = project.ir.scale_m_per_px * 5.0;
+    simplify_ir(&mut project.ir, min_len.max(0.08), merge_tol.max(0.06));
+    if project.ir.walls.len() < 3 {
+        project.ir = ir_backup;
+    }
     for photo in &mut project.photos {
         if photo.room_id.is_none() {
             if let Some(ref rn) = photo.room_name {
@@ -80,6 +79,7 @@ async fn process_build(state: &AppState, project_id: uuid::Uuid) -> anyhow::Resu
     db::update_project(&state.pool, &project).await?;
     emit(state, project_id, "texturing", 0.75, "texturing");
 
+    let data_root = state.project_dir(project_id);
     let glb = state
         .backend
         .build_glb(&project.ir, &project.photos, &data_root)
