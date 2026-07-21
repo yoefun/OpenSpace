@@ -30,9 +30,22 @@ cd web && npm install && npm run build && cd ..
 
 # 后端（默认 :8080，托管 web/dist）
 cargo run -p openspace-api --release
+
+# 端口被占用时换端口（注意 `--` 后面才是程序参数）
+cargo run -p openspace-api --release -- --port 8081
 ```
 
-打开 http://127.0.0.1:8080
+打开 http://127.0.0.1:8080（或你指定的端口）
+
+PowerShell 示例：
+
+```powershell
+cargo run -p openspace-api --release -- --port 8081
+# 或
+$env:PORT=8081; cargo run -p openspace-api --release
+```
+
+查看全部参数：`cargo run -p openspace-api --release -- --help`
 
 ### Windows / 私有 npm 源
 
@@ -52,18 +65,20 @@ npm run build
 
 ```bash
 # 终端 1
-cargo run -p openspace-api
+cargo run -p openspace-api -- --port 8080
 
 # 终端 2
 cd web && npm run dev   # Vite :5173，代理 /api → :8080
 ```
 
-环境变量：
+CLI / 环境变量：
 
-- `OPENSPACE_DATA` — 数据目录（默认 `data/`）
-- `OPENSPACE_WEB` — 静态前端目录（默认 `web/dist`）
-- `PORT` — 端口（默认 `8080`）
-
+| 参数 | 环境变量 | 默认 | 说明 |
+|------|----------|------|------|
+| `--port` / `-p` | `PORT` | `8080` | HTTP 端口 |
+| `--host` | `OPENSPACE_HOST` | `0.0.0.0` | 监听地址 |
+| `--data` | `OPENSPACE_DATA` | `data/` | SQLite 与上传文件目录 |
+| `--web` | `OPENSPACE_WEB` | `web/dist` | 前端静态资源目录 |
 ## 流程
 
 1. **上传**：户型图 JPG/PNG；可选照片并填房间名  
