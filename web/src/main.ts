@@ -155,7 +155,7 @@ async function renderEditor(el: HTMLElement) {
   const projectId = project.id;
   el.innerHTML = `
     <h2>半自动校正</h2>
-    <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。墙线过多时可先「简化墙线」再重建。</p>
+    <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。检测不准时可「重新检测」或「简化墙线」后再重建。</p>
     <div class="toolbar" id="tools">
       <button data-tool="select" class="active">选择/拖拽</button>
       <button data-tool="pan">平移</button>
@@ -363,7 +363,7 @@ async function renderViewer(el: HTMLElement) {
 
   el.innerHTML = `
     <h2>3D 场景</h2>
-    <p class="lede">浏览重建的室内网格。点击房间聚焦。</p>
+    <p class="lede">浏览重建的室内网格（开口俯视，无顶棚）。点击房间聚焦。</p>
     <div class="editor-layout">
       <div id="viewer-host" style="min-height:520px"></div>
       <div class="panel">
