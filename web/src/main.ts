@@ -54,8 +54,11 @@ function render(page: Page) {
 
   const pageEl = app.querySelector<HTMLElement>("#page")!;
   if (page === "upload") renderUpload(pageEl);
-  else if (page === "editor") renderEditor(pageEl);
-  else renderViewer(pageEl);
+  else if (page === "editor") {
+    void renderEditor(pageEl).catch((e) => {
+      pageEl.innerHTML = `<p class="lede status error">校正页加载失败: ${e}</p>`;
+    });
+  } else renderViewer(pageEl);
 }
 
 function renderUpload(el: HTMLElement) {
@@ -149,6 +152,7 @@ async function renderEditor(el: HTMLElement) {
     return;
   }
 
+  const projectId = project.id;
   el.innerHTML = `
     <h2>半自动校正</h2>
     <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。墙线过多时可先「简化墙线」再重建。</p>
@@ -189,15 +193,33 @@ async function renderEditor(el: HTMLElement) {
     </div>
   `;
 
+  const statusEl = () => el.querySelector<HTMLElement>("#estatus")!;
+  const pbarEl = () => el.querySelector<HTMLElement>("#pbar")!;
+
+  const applyMeta = () => {
+    if (!editor || !project) return;
+    const scale = (el.querySelector("#scale") as HTMLInputElement).value;
+    const height = (el.querySelector("#height") as HTMLInputElement).value;
+    const thick = (el.querySelector("#thick") as HTMLInputElement).value;
+    editor.ir.scale_m_per_px = Number(scale) || project.ir.scale_m_per_px;
+    editor.ir.default_wall_height_m = Number(height) || project.ir.default_wall_height_m;
+    editor.ir.default_wall_thickness_m = Number(thick) || project.ir.default_wall_thickness_m;
+    for (const w of editor.ir.walls) {
+      w.height_m = editor.ir.default_wall_height_m;
+      w.thickness_m = editor.ir.default_wall_thickness_m;
+    }
+    editor.draw();
+  };
+
   const canvas = el.querySelector<HTMLCanvasElement>("#fp")!;
   editor?.destroy();
   editor = new FloorplanEditor(canvas, project.ir);
-  await editor.loadImage(`/api/projects/${project.id}/floorplan`);
   editor.onChange = (ir) => {
-    project!.ir = ir;
-    el.querySelector("#estatus")!.textContent = `墙 ${ir.walls.length} · 房间 ${ir.rooms.length}`;
+    if (project) project.ir = ir;
+    statusEl().textContent = `墙 ${ir.walls.length} · 房间 ${ir.rooms.length}`;
   };
 
+  // Bind handlers BEFORE async image load — otherwise a failed loadImage leaves buttons dead.
   el.querySelectorAll<HTMLButtonElement>("#tools button[data-tool]").forEach((btn) => {
     btn.addEventListener("click", () => {
       el.querySelectorAll("#tools button[data-tool]").forEach((b) => b.classList.remove("active"));
@@ -212,12 +234,19 @@ async function renderEditor(el: HTMLElement) {
   el.querySelector("#zoom-fit")!.addEventListener("click", () => editor?.fitToView());
 
   el.querySelector("#redetect")!.addEventListener("click", async () => {
-    const status = el.querySelector("#estatus")!;
+    const status = statusEl();
     try {
       status.textContent = "重新检测中…";
-      project = await detect(project!.id);
+      status.className = "status";
+      project = await detect(projectId);
       editor!.setIr(project.ir);
-      await editor!.loadImage(`/api/projects/${project.id}/floorplan`);
+      try {
+        await editor!.loadImage(`/api/projects/${projectId}/floorplan`);
+      } catch (e) {
+        status.textContent = `检测完成但底图加载失败: ${e}`;
+        status.className = "status error";
+        return;
+      }
       status.textContent = `检测完成：墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}`;
       status.className = project.ir.walls.length <= 30 ? "status ok" : "status";
     } catch (e) {
@@ -227,11 +256,11 @@ async function renderEditor(el: HTMLElement) {
   });
 
   el.querySelector("#simplify")!.addEventListener("click", async () => {
-    const status = el.querySelector("#estatus")!;
+    const status = statusEl();
     try {
       applyMeta();
-      project = await putIr(project!.id, editor!.ir);
-      project = await simplifyIr(project.id);
+      project = await putIr(projectId, editor!.ir);
+      project = await simplifyIr(projectId);
       editor!.setIr(project.ir);
       status.textContent = `已简化：墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}`;
       status.className = "status ok";
@@ -241,23 +270,11 @@ async function renderEditor(el: HTMLElement) {
     }
   });
 
-  const applyMeta = () => {
-    if (!editor || !project) return;
-    editor.ir.scale_m_per_px = Number((el.querySelector("#scale") as HTMLInputElement).value);
-    editor.ir.default_wall_height_m = Number((el.querySelector("#height") as HTMLInputElement).value);
-    editor.ir.default_wall_thickness_m = Number((el.querySelector("#thick") as HTMLInputElement).value);
-    for (const w of editor.ir.walls) {
-      w.height_m = editor.ir.default_wall_height_m;
-      w.thickness_m = editor.ir.default_wall_thickness_m;
-    }
-    editor.draw();
-  };
-
   el.querySelector("#save")!.addEventListener("click", async () => {
     applyMeta();
-    const status = el.querySelector("#estatus")!;
+    const status = statusEl();
     try {
-      project = await putIr(project!.id, editor!.ir);
+      project = await putIr(projectId, editor!.ir);
       status.textContent = "已保存";
       status.className = "status ok";
     } catch (e) {
@@ -267,36 +284,64 @@ async function renderEditor(el: HTMLElement) {
   });
 
   el.querySelector("#confirm")!.addEventListener("click", async () => {
-    applyMeta();
-    const status = el.querySelector("#estatus")!;
-    const pbar = el.querySelector<HTMLElement>("#pbar")!;
+    const status = statusEl();
+    const pbar = pbarEl();
     const confirmBtn = el.querySelector<HTMLButtonElement>("#confirm")!;
+
+    status.textContent = "正在提交重建…";
+    status.className = "status";
+    pbar.style.width = "8%";
     confirmBtn.disabled = true;
+
     try {
-      project = await putIr(project!.id, editor!.ir);
+      if (!editor || !project) {
+        throw new Error("编辑器未就绪，请刷新页面");
+      }
+      applyMeta();
+      project = await putIr(projectId, editor.ir);
+      status.textContent = "已保存，正在入队重建…";
+      pbar.style.width = "20%";
+
       unsub?.();
       const onProgress = (msg: string, progress: number, ok?: boolean) => {
-        pbar.style.width = `${Math.round(progress * 100)}%`;
+        pbar.style.width = `${Math.max(8, Math.round(progress * 100))}%`;
         status.textContent = msg;
         status.className = ok === false ? "status error" : ok ? "status ok" : "status";
       };
-      unsub = subscribeEvents(project.id, (ev) => {
-        onProgress(`${ev.status}: ${ev.message}`, ev.progress, ev.status === "ready" ? true : ev.status === "failed" ? false : undefined);
+
+      unsub = subscribeEvents(projectId, (ev) => {
+        onProgress(
+          `${ev.status}: ${ev.message}`,
+          ev.progress,
+          ev.status === "ready" ? true : ev.status === "failed" ? false : undefined,
+        );
       });
-      project = await build(project.id);
-      onProgress("重建中…", project.progress);
-      project = await waitForBuild(project.id, (p) => {
+
+      project = await build(projectId);
+      onProgress(`已入队 · ${project.progress_message}`, project.progress);
+      project = await waitForBuild(projectId, (p) => {
         onProgress(`${p.status}: ${p.progress_message}`, p.progress);
       });
       onProgress(`完成：${project.progress_message}`, 1, true);
       setTimeout(() => render("viewer"), 400);
     } catch (e) {
-      status.textContent = String(e);
+      const msg = e instanceof Error ? e.message : String(e);
+      status.textContent = msg.includes("fetch")
+        ? `请求失败：请确认后端已启动 (openspace-api) 且页面地址正确。${msg}`
+        : msg;
       status.className = "status error";
+      pbar.style.width = "0%";
     } finally {
       confirmBtn.disabled = false;
     }
   });
+
+  try {
+    await editor.loadImage(`/api/projects/${projectId}/floorplan`);
+  } catch (e) {
+    statusEl().textContent = `底图加载失败（仍可编辑墙线）: ${e}`;
+    statusEl().className = "status error";
+  }
 }
 
 async function renderViewer(el: HTMLElement) {

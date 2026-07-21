@@ -175,7 +175,8 @@ button.btn.ghost-disabled {
 }
 
 .status.error {
-  color: var(--danger);
+  color: #ff8a75;
+  font-weight: 500;
 }
 
 .status.ok {
