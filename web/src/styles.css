@@ -200,14 +200,25 @@ button.btn.ghost-disabled {
   border-radius: 12px;
   overflow: hidden;
   background: #111;
-  min-height: 420px;
+  min-height: 480px;
+  height: min(72vh, 720px);
 }
 
 .canvas-wrap canvas {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
   cursor: crosshair;
+  touch-action: none;
+}
+
+.toolbar-sep {
+  display: inline-block;
+  width: 1px;
+  height: 1.4rem;
+  background: var(--line);
+  margin: 0 0.25rem;
+  vertical-align: middle;
 }
 
 .toolbar {

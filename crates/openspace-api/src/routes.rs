@@ -12,7 +12,7 @@ use axum::{
 };
 use chrono::Utc;
 use futures::stream::StreamExt;
-use openspace_core::{FloorplanIR, PhotoRef, Project, ProjectStatus};
+use openspace_core::{simplify_ir, FloorplanIR, PhotoRef, Project, ProjectStatus};
 use serde::Serialize;
 use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
@@ -26,6 +26,7 @@ pub fn api_router() -> Router<AppState> {
         .route("/api/projects/{id}/photos", post(upload_photos))
         .route("/api/projects/{id}/detect", post(detect))
         .route("/api/projects/{id}/ir", get(get_ir).put(put_ir))
+        .route("/api/projects/{id}/ir/simplify", post(simplify_ir_route))
         .route("/api/projects/{id}/build", post(build))
         .route("/api/projects/{id}/events", get(events))
         .route("/api/projects/{id}/model.glb", get(model_glb))
@@ -281,6 +282,24 @@ async fn put_ir(
     Json(project).into_response()
 }
 
+async fn simplify_ir_route(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
+    let mut project = match db::get_project(&state.pool, id).await {
+        Ok(Some(p)) => p,
+        Ok(None) => return err(StatusCode::NOT_FOUND, "project not found"),
+        Err(e) => return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+
+    let min_len = project.ir.scale_m_per_px * 12.0;
+    let merge_tol = project.ir.scale_m_per_px * 8.0;
+    simplify_ir(&mut project.ir, min_len.max(0.15), merge_tol.max(0.1));
+    project.status = ProjectStatus::NeedsCorrection;
+    project.updated_at = Utc::now();
+    if let Err(e) = db::update_project(&state.pool, &project).await {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, e.to_string());
+    }
+    Json(project).into_response()
+}
+
 async fn build(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response {
     let mut project = match db::get_project(&state.pool, id).await {
         Ok(Some(p)) => p,
@@ -295,6 +314,20 @@ async fn build(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response 
         );
     }
 
+    if matches!(
+        project.status,
+        ProjectStatus::Meshing | ProjectStatus::Texturing | ProjectStatus::Confirmed
+    ) {
+        return err(
+            StatusCode::CONFLICT,
+            "build already in progress; wait or refresh status",
+        );
+    }
+
+    // Clean noisy detections before meshing (common with raster floorplans).
+    let min_len = project.ir.scale_m_per_px * 10.0;
+    let merge_tol = project.ir.scale_m_per_px * 6.0;
+    simplify_ir(&mut project.ir, min_len.max(0.12), merge_tol.max(0.08));
     project.status = ProjectStatus::Confirmed;
     project.progress = 0.4;
     project.progress_message = "queued for build".into();

@@ -5,8 +5,10 @@ import {
   detect,
   getProject,
   putIr,
+  simplifyIr,
   subscribeEvents,
   uploadPhotos,
+  waitForBuild,
   type FloorplanIR,
   type Project,
 } from "./api";
@@ -149,13 +151,19 @@ async function renderEditor(el: HTMLElement) {
 
   el.innerHTML = `
     <h2>半自动校正</h2>
-    <p class="lede">拖动墙端点修正；用工具新增墙/门/窗。确认后提交重建。</p>
+    <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。墙线过多时可先「简化墙线」再重建。</p>
     <div class="toolbar" id="tools">
       <button data-tool="select" class="active">选择/拖拽</button>
+      <button data-tool="pan">平移</button>
       <button data-tool="add-wall">加墙</button>
       <button data-tool="add-door">门</button>
       <button data-tool="add-window">窗</button>
       <button id="del">删除选中墙</button>
+      <span class="toolbar-sep"></span>
+      <button id="zoom-out" title="缩小">−</button>
+      <button id="zoom-fit" title="适应窗口">适应</button>
+      <button id="zoom-in" title="放大">+</button>
+      <button class="btn secondary" id="simplify">简化墙线</button>
     </div>
     <div class="editor-layout">
       <div class="canvas-wrap"><canvas id="fp"></canvas></div>
@@ -181,6 +189,7 @@ async function renderEditor(el: HTMLElement) {
   `;
 
   const canvas = el.querySelector<HTMLCanvasElement>("#fp")!;
+  editor?.destroy();
   editor = new FloorplanEditor(canvas, project.ir);
   await editor.loadImage(`/api/projects/${project.id}/floorplan`);
   editor.onChange = (ir) => {
@@ -197,6 +206,24 @@ async function renderEditor(el: HTMLElement) {
   });
 
   el.querySelector("#del")!.addEventListener("click", () => editor?.deleteSelected());
+  el.querySelector("#zoom-in")!.addEventListener("click", () => editor?.zoomIn());
+  el.querySelector("#zoom-out")!.addEventListener("click", () => editor?.zoomOut());
+  el.querySelector("#zoom-fit")!.addEventListener("click", () => editor?.fitToView());
+
+  el.querySelector("#simplify")!.addEventListener("click", async () => {
+    const status = el.querySelector("#estatus")!;
+    try {
+      applyMeta();
+      project = await putIr(project!.id, editor!.ir);
+      project = await simplifyIr(project.id);
+      editor!.setIr(project.ir);
+      status.textContent = `已简化：墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}`;
+      status.className = "status ok";
+    } catch (e) {
+      status.textContent = String(e);
+      status.className = "status error";
+    }
+  });
 
   const applyMeta = () => {
     if (!editor || !project) return;
@@ -227,24 +254,31 @@ async function renderEditor(el: HTMLElement) {
     applyMeta();
     const status = el.querySelector("#estatus")!;
     const pbar = el.querySelector<HTMLElement>("#pbar")!;
+    const confirmBtn = el.querySelector<HTMLButtonElement>("#confirm")!;
+    confirmBtn.disabled = true;
     try {
       project = await putIr(project!.id, editor!.ir);
       unsub?.();
+      const onProgress = (msg: string, progress: number, ok?: boolean) => {
+        pbar.style.width = `${Math.round(progress * 100)}%`;
+        status.textContent = msg;
+        status.className = ok === false ? "status error" : ok ? "status ok" : "status";
+      };
       unsub = subscribeEvents(project.id, (ev) => {
-        pbar.style.width = `${Math.round(ev.progress * 100)}%`;
-        status.textContent = `${ev.status}: ${ev.message}`;
-        if (ev.status === "ready") {
-          status.className = "status ok";
-          setTimeout(() => render("viewer"), 400);
-        }
-        if (ev.status === "failed") status.className = "status error";
+        onProgress(`${ev.status}: ${ev.message}`, ev.progress, ev.status === "ready" ? true : ev.status === "failed" ? false : undefined);
       });
       project = await build(project.id);
-      status.textContent = "已入队重建…";
-      status.className = "status";
+      onProgress("重建中…", project.progress);
+      project = await waitForBuild(project.id, (p) => {
+        onProgress(`${p.status}: ${p.progress_message}`, p.progress);
+      });
+      onProgress(`完成：${project.progress_message}`, 1, true);
+      setTimeout(() => render("viewer"), 400);
     } catch (e) {
       status.textContent = String(e);
       status.className = "status error";
+    } finally {
+      confirmBtn.disabled = false;
     }
   });
 }
