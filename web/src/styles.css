@@ -213,6 +213,22 @@ header .brand {
   text-shadow: 0 0 24px var(--accent-glow);
 }
 
+header .brand-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+header .author-credit {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
 header .brand span {
   color: var(--accent);
 }

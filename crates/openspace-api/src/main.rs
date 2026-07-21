@@ -19,6 +19,7 @@ use tracing_subscriber::EnvFilter;
 #[command(
     name = "openspace-api",
     about = "OpenSpace floorplan reconstruction API",
+    author = "yoefun <xinglinsky@outlook.com>",
     version
 )]
 struct Args {
@@ -74,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         .parse()
         .map_err(|e| anyhow::anyhow!("invalid --host '{}': {e}", args.host))?;
     let addr = SocketAddr::from((host, args.port));
-    tracing::info!("OpenSpace listening on http://{addr}");
+    tracing::info!("OpenSpace listening on http://{addr} (author: yoefun <xinglinsky@outlook.com>)");
     let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| {
         anyhow::anyhow!(
             "failed to bind {addr}: {e}\n\

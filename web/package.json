@@ -3,6 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "author": "yoefun <xinglinsky@outlook.com>",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",

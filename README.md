@@ -107,3 +107,7 @@ cargo test --workspace
 ## 参考（不直接依赖）
 
 Plan2Scene、SpatialLM、Lyra 2.0 — 仅作能力对照。
+
+## 作者
+
+yoefun（xinglinsky@outlook.com）

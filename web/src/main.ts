@@ -44,7 +44,10 @@ type Page = "upload" | "editor" | "viewer";
 function render(page: Page) {
   app.innerHTML = `
     <header class="app-bar">
-      <h1 class="brand">Open<span>Space</span></h1>
+      <div class="brand-block">
+        <h1 class="brand">Open<span>Space</span></h1>
+        <p class="author-credit">作者 · yoefun</p>
+      </div>
       <nav class="tabs">
         <button data-page="upload" class="${page === "upload" ? "active" : ""}">上传</button>
         <button data-page="editor" class="${page === "editor" ? "active" : ""}">校正</button>
