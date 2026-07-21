@@ -1,0 +1,15 @@
+[package]
+name = "openspace-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+openspace-core = { workspace = true }
+openspace-vision = { workspace = true }
+openspace-mesh = { workspace = true }
+openspace-texture = { workspace = true }
+async-trait = { workspace = true }
+image = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
