@@ -32,8 +32,28 @@ pub enum MeshKind {
     OpeningFrame,
 }
 
-/// Extrude walls, floors, ceilings from IR (meters).
+/// Options for mesh extrusion (MVP defaults to open-top dollhouse view).
+#[derive(Debug, Clone, Copy)]
+pub struct ExtrudeOptions {
+    pub include_ceiling: bool,
+    pub cap_wall_tops: bool,
+}
+
+impl Default for ExtrudeOptions {
+    fn default() -> Self {
+        Self {
+            include_ceiling: false,
+            cap_wall_tops: false,
+        }
+    }
+}
+
+/// Extrude walls, floors, and optional ceilings from IR (meters).
 pub fn extrude(ir: &FloorplanIR) -> Result<MeshScene> {
+    extrude_with_options(ir, &ExtrudeOptions::default())
+}
+
+pub fn extrude_with_options(ir: &FloorplanIR, opts: &ExtrudeOptions) -> Result<MeshScene> {
     if ir.walls.is_empty() && ir.rooms.is_empty() {
         return Err(OpenSpaceError::InvalidFloorplan(
             "empty IR: add walls or rooms before build".into(),
@@ -49,6 +69,7 @@ pub fn extrude(ir: &FloorplanIR) -> Result<MeshScene> {
             wall.thickness_m,
             wall.height_m,
             wall.id,
+            opts.cap_wall_tops,
         ));
     }
 
@@ -80,12 +101,14 @@ pub fn extrude(ir: &FloorplanIR) -> Result<MeshScene> {
             continue;
         }
         meshes.push(polygon_slab(room, 0.0, true, MeshKind::Floor));
-        meshes.push(polygon_slab(
-            room,
-            ir.default_wall_height_m,
-            false,
-            MeshKind::Ceiling,
-        ));
+        if opts.include_ceiling {
+            meshes.push(polygon_slab(
+                room,
+                ir.default_wall_height_m,
+                false,
+                MeshKind::Ceiling,
+            ));
+        }
     }
 
     if ir.rooms.is_empty() && !ir.walls.is_empty() {
@@ -107,18 +130,20 @@ pub fn extrude(ir: &FloorplanIR) -> Result<MeshScene> {
             wall_ids: ir.walls.iter().map(|w| w.id).collect(),
         };
         meshes.push(polygon_slab(&room, 0.0, true, MeshKind::Floor));
-        meshes.push(polygon_slab(
-            &room,
-            ir.default_wall_height_m,
-            false,
-            MeshKind::Ceiling,
-        ));
+        if opts.include_ceiling {
+            meshes.push(polygon_slab(
+                &room,
+                ir.default_wall_height_m,
+                false,
+                MeshKind::Ceiling,
+            ));
+        }
     }
 
     Ok(MeshScene { meshes })
 }
 
-fn extrude_wall(a: Vec2, b: Vec2, thickness: f32, height: f32, id: Uuid) -> NamedMesh {
+fn extrude_wall(a: Vec2, b: Vec2, thickness: f32, height: f32, id: Uuid, cap_top: bool) -> NamedMesh {
     let dir = (b - a).normalize_or_zero();
     let normal = Vec2::new(-dir.y, dir.x);
     let half = thickness * 0.5;
@@ -185,17 +210,19 @@ fn extrude_wall(a: Vec2, b: Vec2, thickness: f32, height: f32, id: Uuid) -> Name
             n,
         );
     }
-    push_quad(
-        &mut positions,
-        &mut normals,
-        &mut uvs,
-        &mut indices,
-        corners_t[0],
-        corners_t[1],
-        corners_t[2],
-        corners_t[3],
-        Vec3::Y,
-    );
+    if cap_top {
+        push_quad(
+            &mut positions,
+            &mut normals,
+            &mut uvs,
+            &mut indices,
+            corners_t[0],
+            corners_t[1],
+            corners_t[2],
+            corners_t[3],
+            Vec3::Y,
+        );
+    }
     push_quad(
         &mut positions,
         &mut normals,
@@ -778,7 +805,8 @@ mod tests {
     fn extrude_and_export_glb() {
         let ir = sample_ir();
         let scene = extrude(&ir).unwrap();
-        assert!(scene.meshes.len() >= 5); // 4 walls + floor + ceiling
+        assert!(scene.meshes.len() >= 5); // 4 walls + floor (open-top MVP)
+        assert!(!scene.meshes.iter().any(|m| m.kind == MeshKind::Ceiling));
         assert!(scene.meshes.iter().any(|m| m.name.contains("Living")));
         let glb = export_glb(&scene).unwrap();
         assert!(glb.len() > 100);

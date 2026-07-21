@@ -4,7 +4,7 @@ mod projection;
 
 use glam::Vec2;
 use image::{DynamicImage, GrayImage, Luma};
-use openspace_core::{simplify_ir, EntityId, FloorplanIR, OpenSpaceError, Result, Room, WallSegment};
+use openspace_core::{simplify_ir, FloorplanIR, OpenSpaceError, Result, Room, WallSegment};
 use projection::detect_structural_segments;
 use uuid::Uuid;
 
@@ -40,18 +40,21 @@ pub fn detect_floorplan(img: &DynamicImage) -> Result<FloorplanIR> {
     let thickness = 0.15_f32;
 
     // Primary: structural walls from dark-line projection (colored CAD plans).
-    let mut segments = detect_structural_segments(&gray);
+    let mut segments = detect_structural_segments(img);
 
     // Fallback: edge pipeline for simple B/W line drawings.
     if segments.len() < 4 {
         segments = detect_edge_segments(&gray);
     }
 
-    let snap_tol = (w.min(h) as f32 * 0.012).clamp(4.0, 12.0);
+    let snap_tol = (w.min(h) as f32 * 0.012).clamp(4.0, 14.0);
+    let seal_tol = snap_tol * 2.5;
     orthogonalize(&mut segments);
     snap_endpoints(&mut segments, snap_tol);
-    merge_collinear_segments(&mut segments, snap_tol, snap_tol * 1.2);
+    merge_collinear_segments(&mut segments, snap_tol, seal_tol);
     segments = dedupe_segments(&segments, snap_tol * 0.8);
+    seal_wall_junctions(&mut segments, seal_tol, w as f32, h as f32);
+    merge_collinear_segments(&mut segments, snap_tol, seal_tol);
 
     let min_px = (w.min(h) as f32 * 0.06).max(24.0);
 
@@ -426,6 +429,95 @@ fn merge_seg(a: &Seg, b: &Seg) -> Seg {
             y0: ymin,
             x1: x,
             y1: ymax,
+        }
+    }
+}
+
+fn seal_wall_junctions(segs: &mut [Seg], tol: f32, img_w: f32, img_h: f32) {
+    if segs.is_empty() {
+        return;
+    }
+    let snapshot: Vec<Seg> = segs
+        .iter()
+        .map(|s| Seg {
+            x0: s.x0,
+            y0: s.y0,
+            x1: s.x1,
+            y1: s.y1,
+        })
+        .collect();
+
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for s in snapshot.iter() {
+        min_x = min_x.min(s.x0).min(s.x1);
+        max_x = max_x.max(s.x0).max(s.x1);
+        min_y = min_y.min(s.y0).min(s.y1);
+        max_y = max_y.max(s.y0).max(s.y1);
+    }
+
+    let border_tol = img_w.min(img_h) * 0.06;
+    for s in segs.iter_mut() {
+        if is_horiz(s) {
+            let y = s.y0;
+            for v in snapshot.iter() {
+                if !is_horiz(v) {
+                    let x = v.x0;
+                    if y >= v.y0.min(v.y1) - tol && y <= v.y0.max(v.y1) + tol {
+                        if (s.x0 - x).abs() < tol {
+                            s.x0 = x;
+                        }
+                        if (s.x1 - x).abs() < tol {
+                            s.x1 = x;
+                        }
+                    }
+                }
+            }
+            if s.x0 - min_x < border_tol {
+                s.x0 = min_x;
+            }
+            if max_x - s.x1 < border_tol {
+                s.x1 = max_x;
+            }
+            if y - min_y < border_tol {
+                s.y0 = min_y;
+                s.y1 = min_y;
+            }
+            if max_y - y < border_tol {
+                s.y0 = max_y;
+                s.y1 = max_y;
+            }
+        } else {
+            let x = s.x0;
+            for h in snapshot.iter() {
+                if is_horiz(h) {
+                    let hy = h.y0;
+                    if x >= h.x0.min(h.x1) - tol && x <= h.x0.max(h.x1) + tol {
+                        if (s.y0 - hy).abs() < tol {
+                            s.y0 = hy;
+                        }
+                        if (s.y1 - hy).abs() < tol {
+                            s.y1 = hy;
+                        }
+                    }
+                }
+            }
+            if s.y0 - min_y < border_tol {
+                s.y0 = min_y;
+            }
+            if max_y - s.y1 < border_tol {
+                s.y1 = max_y;
+            }
+            if x - min_x < border_tol {
+                s.x0 = min_x;
+                s.x1 = min_x;
+            }
+            if max_x - x < border_tol {
+                s.x0 = max_x;
+                s.x1 = max_x;
+            }
         }
     }
 }
