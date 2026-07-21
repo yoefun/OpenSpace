@@ -1,0 +1,22 @@
+{
+  "name": "openspace-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "author": "yoefun <xinglinsky@outlook.com>",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
+    "@fontsource/orbitron": "^5.3.0",
+    "three": "^0.172.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.172.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6"
+  }
+}
