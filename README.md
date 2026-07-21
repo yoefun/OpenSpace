@@ -25,7 +25,7 @@
 ## 快速开始
 
 ```bash
-# 前端
+# 前端（web/.npmrc 已固定使用 registry.npmjs.org）
 cd web && npm install && npm run build && cd ..
 
 # 后端（默认 :8080，托管 web/dist）
@@ -33,6 +33,20 @@ cargo run -p openspace-api --release
 ```
 
 打开 http://127.0.0.1:8080
+
+### Windows / 私有 npm 源
+
+若本机默认 registry 是公司源（例如 `npm.shopee.io`）导致 `E404`，本仓库 `web/.npmrc` 会强制走官方源。仍失败时可：
+
+```powershell
+cd web
+Remove-Item -Recurse -Force node_modules -ErrorAction SilentlyContinue
+npm cache clean --force
+npm install --registry=https://registry.npmjs.org/
+npm run build
+```
+
+若出现 `EPERM` 删不掉 `node_modules`，先关掉占用该目录的 IDE/杀毒实时扫描，或重启终端后再删。
 
 开发时也可：
 
