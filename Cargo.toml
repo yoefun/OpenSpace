@@ -13,7 +13,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-authors = ["OpenSpace"]
+authors = ["yoefun <xinglinsky@outlook.com>"]
 
 [workspace.dependencies]
 openspace-core = { path = "crates/openspace-core" }
