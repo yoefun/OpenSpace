@@ -136,16 +136,32 @@ export async function waitForBuild(
   timeoutMs = 120_000,
 ): Promise<Project> {
   const start = Date.now();
+  const inProgress = new Set([
+    "confirmed",
+    "meshing",
+    "texturing",
+    "detecting",
+  ]);
+
   while (Date.now() - start < timeoutMs) {
-    const p = await getProject(id);
+    let p: Project;
+    try {
+      p = await getProject(id);
+    } catch (e) {
+      throw new Error(`无法获取项目状态: ${e}`);
+    }
     onProgress?.(p);
     if (p.status === "ready") return p;
     if (p.status === "failed") {
       throw new Error(p.error || p.progress_message || "重建失败");
     }
-    await new Promise((r) => setTimeout(r, 500));
+    if (!inProgress.has(p.status) && p.status !== "needs_correction") {
+      // Unexpected idle state after build was requested.
+      throw new Error(`重建未启动 (status=${p.status})`);
+    }
+    await new Promise((r) => setTimeout(r, 400));
   }
-  throw new Error("重建超时，请检查后端日志或刷新页面");
+  throw new Error("重建超时，请确认后端正在运行并刷新页面");
 }
 
 export function subscribeEvents(

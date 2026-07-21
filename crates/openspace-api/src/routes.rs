@@ -321,6 +321,10 @@ async fn build(State(state): State<AppState>, Path(id): Path<Uuid>) -> Response 
         );
     }
 
+    // Allow retry if a previous build was queued but never finished (e.g. server restart).
+    if project.status == ProjectStatus::Confirmed {
+        tracing::warn!("re-queueing build for project {id} (was stuck in confirmed)");
+    }
     let ir_backup = project.ir.clone();
     let min_len = project.ir.scale_m_per_px * 8.0;
     let merge_tol = project.ir.scale_m_per_px * 5.0;
