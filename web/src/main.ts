@@ -12,10 +12,13 @@ import {
   type FloorplanIR,
   type Project,
 } from "./api";
+import { mountBackground } from "./bg";
 import { FloorplanEditor, type EditorTool } from "./editor";
 import { SceneViewer } from "./viewer";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
+const bgRoot = document.querySelector<HTMLElement>("#bg-fx");
+if (bgRoot) mountBackground(bgRoot);
 
 let project: Project | null = null;
 let editor: FloorplanEditor | null = null;
@@ -78,7 +81,7 @@ function renderUpload(el: HTMLElement) {
       <div class="status" id="status"></div>
     </div>
     <div class="panel">
-      <h3 style="margin-top:0;font-family:var(--font-display)">室内照片（可选）</h3>
+      <h3 class="panel-heading">室内照片（可选）</h3>
       <div class="row">
         <label>房间名
           <input type="text" id="room_name" placeholder="Room 1" />
@@ -157,36 +160,36 @@ async function renderEditor(el: HTMLElement) {
     <h2>半自动校正</h2>
     <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。墙线过多时可先「简化墙线」再重建。</p>
     <div class="toolbar" id="tools">
-      <button data-tool="select" class="active">选择/拖拽</button>
-      <button data-tool="pan">平移</button>
-      <button data-tool="add-wall">加墙</button>
-      <button data-tool="add-door">门</button>
-      <button data-tool="add-window">窗</button>
-      <button id="del">删除选中墙</button>
+      <button type="button" data-tool="select" class="tool-btn active">选择/拖拽</button>
+      <button type="button" data-tool="pan" class="tool-btn">平移</button>
+      <button type="button" data-tool="add-wall" class="tool-btn">加墙</button>
+      <button type="button" data-tool="add-door" class="tool-btn">门</button>
+      <button type="button" data-tool="add-window" class="tool-btn">窗</button>
+      <button type="button" id="del" class="tool-btn">删除选中墙</button>
       <span class="toolbar-sep"></span>
-      <button id="zoom-out" title="缩小">−</button>
-      <button id="zoom-fit" title="适应窗口">适应</button>
-      <button id="zoom-in" title="放大">+</button>
-      <button class="btn secondary" id="redetect">重新检测</button>
-      <button class="btn secondary" id="simplify">简化墙线</button>
+      <button type="button" id="zoom-out" class="tool-btn icon-btn" title="缩小">−</button>
+      <button type="button" id="zoom-fit" class="tool-btn" title="适应窗口">适应</button>
+      <button type="button" id="zoom-in" class="tool-btn icon-btn" title="放大">+</button>
+      <button type="button" class="btn secondary" id="redetect">重新检测</button>
+      <button type="button" class="btn secondary" id="simplify">简化墙线</button>
     </div>
     <div class="editor-layout">
       <div class="canvas-wrap"><canvas id="fp"></canvas></div>
       <div class="panel">
-        <label>比例尺 m/px
+        <label class="field">比例尺 m/px
           <input type="number" step="0.0001" id="scale" value="${project.ir.scale_m_per_px}" />
         </label>
-        <label style="margin-top:0.75rem">层高 m
+        <label class="field">层高 m
           <input type="number" step="0.1" id="height" value="${project.ir.default_wall_height_m}" />
         </label>
-        <label style="margin-top:0.75rem">墙厚 m
+        <label class="field">墙厚 m
           <input type="number" step="0.01" id="thick" value="${project.ir.default_wall_thickness_m}" />
         </label>
-        <div class="row" style="margin-top:1rem">
-          <button class="btn secondary" id="save">保存 IR</button>
-          <button class="btn" id="confirm">确认重建</button>
+        <div class="side-actions">
+          <button type="button" class="btn secondary" id="save">保存 IR</button>
+          <button type="button" class="btn" id="confirm">确认重建</button>
         </div>
-        <button class="btn ghost-disabled" id="design" disabled title="MVP 占位">AI 设计（即将推出）</button>
+        <button type="button" class="btn ghost-disabled" id="design" disabled title="MVP 占位">AI 设计（即将推出）</button>
         <div class="status" id="estatus">墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}</div>
         <div class="progress-bar"><span id="pbar"></span></div>
       </div>
@@ -365,12 +368,14 @@ async function renderViewer(el: HTMLElement) {
     <h2>3D 场景</h2>
     <p class="lede">浏览重建的室内网格。点击房间聚焦。</p>
     <div class="editor-layout">
-      <div id="viewer-host" style="min-height:520px"></div>
+      <div id="viewer-host"></div>
       <div class="panel">
         <div class="status" id="vstatus">状态：${project.status}</div>
         <div class="progress-bar"><span id="vpbar" style="width:${Math.round(project.progress * 100)}%"></span></div>
-        <button class="btn secondary" id="reload" style="margin-top:0.75rem">刷新模型</button>
-        <h3 style="font-family:var(--font-display);margin:1rem 0 0.25rem">房间</h3>
+        <div class="side-actions">
+          <button type="button" class="btn secondary" id="reload">刷新模型</button>
+        </div>
+        <h3 class="panel-heading" style="margin-top:1.1rem">房间</h3>
         <ul class="room-list" id="rooms"></ul>
       </div>
     </div>
