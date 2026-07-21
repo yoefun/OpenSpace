@@ -20,6 +20,13 @@ import {
 } from "./api";
 import { mountBackground } from "./bg";
 import { FloorplanEditor, type EditorTool } from "./editor";
+import {
+  bindFilePickers,
+  filePicker,
+  iconBtn,
+  icons,
+  labeledBtn,
+} from "./icons";
 import { SceneViewer } from "./viewer";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -82,10 +89,11 @@ function renderUpload(el: HTMLElement) {
         <label>项目名称
           <input type="text" id="name" value="我的户型" />
         </label>
-        <label>户型图
-          <input type="file" id="floorplan" accept="image/png,image/jpeg" />
-        </label>
-        <button class="btn" id="create">创建并检测</button>
+        <div class="field-block">
+          <span class="field-label">户型图</span>
+          ${filePicker({ id: "floorplan", accept: "image/png,image/jpeg", buttonLabel: "选择户型图" })}
+        </div>
+        ${labeledBtn({ id: "create", icon: "detect", label: "创建并检测" })}
       </div>
       <div class="status" id="status"></div>
     </div>
@@ -95,15 +103,23 @@ function renderUpload(el: HTMLElement) {
         <label>房间名
           <input type="text" id="room_name" placeholder="Room 1" />
         </label>
-        <label>照片
-          <input type="file" id="photos" accept="image/*" multiple />
-        </label>
-        <button class="btn secondary" id="upload-photos" ${project ? "" : "disabled"}>上传照片</button>
+        <div class="field-block">
+          <span class="field-label">照片</span>
+          ${filePicker({ id: "photos", accept: "image/*", multiple: true, buttonLabel: "选择照片", icon: "image" })}
+        </div>
+        ${labeledBtn({
+          id: "upload-photos",
+          icon: "image",
+          label: "上传照片",
+          className: "btn secondary",
+          disabled: !project,
+        })}
       </div>
       <p class="status">${project ? `当前项目：${project.name} (${project.id.slice(0, 8)}…) · 状态 ${project.status}` : "请先创建项目"}</p>
     </div>
   `;
 
+  bindFilePickers(el);
   const status = el.querySelector<HTMLElement>("#status")!;
 
   el.querySelector("#create")!.addEventListener("click", async () => {
@@ -169,18 +185,19 @@ async function renderEditor(el: HTMLElement) {
     <h2>半自动校正</h2>
     <p class="lede">滚轮缩放 · Shift+拖拽平移 · 拖墙端点修正。检测不准时可「重新检测」或「简化墙线」后再重建。</p>
     <div class="toolbar" id="tools">
-      <button type="button" data-tool="select" class="tool-btn active">选择/拖拽</button>
-      <button type="button" data-tool="pan" class="tool-btn">平移</button>
-      <button type="button" data-tool="add-wall" class="tool-btn">加墙</button>
-      <button type="button" data-tool="add-door" class="tool-btn">门</button>
-      <button type="button" data-tool="add-window" class="tool-btn">窗</button>
-      <button type="button" id="del" class="tool-btn">删除选中墙</button>
+      ${iconBtn({ tool: "select", icon: "select", title: "选择/拖拽", active: true })}
+      ${iconBtn({ tool: "pan", icon: "pan", title: "平移" })}
+      ${iconBtn({ tool: "add-wall", icon: "wall", title: "加墙" })}
+      ${iconBtn({ tool: "add-door", icon: "door", title: "门" })}
+      ${iconBtn({ tool: "add-window", icon: "window", title: "窗" })}
+      ${iconBtn({ id: "del", icon: "trash", title: "删除选中墙" })}
       <span class="toolbar-sep"></span>
-      <button type="button" id="zoom-out" class="tool-btn icon-btn" title="缩小">−</button>
-      <button type="button" id="zoom-fit" class="tool-btn" title="适应窗口">适应</button>
-      <button type="button" id="zoom-in" class="tool-btn icon-btn" title="放大">+</button>
-      <button type="button" class="btn secondary" id="redetect">重新检测</button>
-      <button type="button" class="btn secondary" id="simplify">简化墙线</button>
+      ${iconBtn({ id: "zoom-out", icon: "zoomOut", title: "缩小" })}
+      ${iconBtn({ id: "zoom-fit", icon: "zoomFit", title: "适应窗口" })}
+      ${iconBtn({ id: "zoom-in", icon: "zoomIn", title: "放大" })}
+      <span class="toolbar-sep"></span>
+      ${labeledBtn({ id: "redetect", icon: "detect", label: "重新检测", className: "btn secondary" })}
+      ${labeledBtn({ id: "simplify", icon: "simplify", label: "简化墙线", className: "btn secondary" })}
     </div>
     <div class="editor-layout">
       <div class="canvas-wrap"><canvas id="fp"></canvas></div>
@@ -195,10 +212,10 @@ async function renderEditor(el: HTMLElement) {
           <input type="number" step="0.01" id="thick" value="${project.ir.default_wall_thickness_m}" />
         </label>
         <div class="side-actions">
-          <button type="button" class="btn secondary" id="save">保存 IR</button>
-          <button type="button" class="btn" id="confirm">确认重建</button>
+          ${labeledBtn({ id: "save", icon: "save", label: "保存 IR", className: "btn secondary" })}
+          ${labeledBtn({ id: "confirm", icon: "build", label: "确认重建" })}
         </div>
-        <button type="button" class="btn ghost-disabled" id="design" disabled title="MVP 占位">AI 设计（即将推出）</button>
+        <button type="button" class="btn ghost-disabled" id="design" disabled title="MVP 占位">${icons.spark}<span>AI 设计（即将推出）</span></button>
         <div class="status" id="estatus">墙 ${project.ir.walls.length} · 房间 ${project.ir.rooms.length}</div>
         <div class="progress-bar"><span id="pbar"></span></div>
       </div>
@@ -382,7 +399,7 @@ async function renderViewer(el: HTMLElement) {
         <div class="status" id="vstatus">状态：${project.status}</div>
         <div class="progress-bar"><span id="vpbar" style="width:${Math.round(project.progress * 100)}%"></span></div>
         <div class="side-actions">
-          <button type="button" class="btn secondary" id="reload">刷新模型</button>
+          ${labeledBtn({ id: "reload", icon: "reload", label: "刷新模型", className: "btn secondary" })}
         </div>
         <h3 class="panel-heading" style="margin-top:1.1rem">房间</h3>
         <ul class="room-list" id="rooms"></ul>
